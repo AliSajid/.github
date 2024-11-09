@@ -1,0 +1,93 @@
+name: Milestone Release Workflow
+on:
+  issues:
+    types: [milestoned, labeled, closed]
+permissions:
+  issues: write
+  contents: read
+  pull-requests: write
+  project: write
+jobs:
+  milestone_release_workflow:
+    runs-on: ubuntu-latest
+    if: github.event.action == 'milestoned' || github.event.label.name == 'milestone'
+    env:
+      BACKLOG_COLUMN_ID: ${{ secrets.BACKLOG_COLUMN_ID }}
+      IN_PROGRESS_COLUMN_ID: ${{ secrets.IN_PROGRESS_COLUMN_ID }}
+      REVIEW_COLUMN_ID: ${{ secrets.REVIEW_COLUMN_ID }}
+      DONE_COLUMN_ID: ${{ secrets.DONE_COLUMN_ID }}
+      MILESTONE_LABEL: "milestone"
+      COMMENT: "This issue has been added to a milestone! It is now part of our release tracking process."
+    steps:
+      # Step 1: Check and create required labels
+      - name: Ensure Labels Exist
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const labels = await github.issues.listLabelsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+
+            const existingLabels = labels.data.map(label => label.name);
+            const requiredLabel = "${{ env.MILESTONE_LABEL }}";
+
+            if (!existingLabels.includes(requiredLabel)) {
+              await github.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: requiredLabel,
+                color: "0e8a16",  // Optional green color
+                description: "Milestone release tracking label"
+              });
+            }
+      # Step 2: Add 'milestone' label to issues in the milestone
+      - name: Add Milestone Label
+        uses: ./.github/actions/add-label
+        with:
+          label: ${{ env.MILESTONE_LABEL }}
+      # Step 3: Move to Backlog column
+      - name: Move to Backlog Column
+        uses: ./.github/actions/move-to-column
+        with:
+          column_id: ${{ env.BACKLOG_COLUMN_ID }}
+      # Step 4: Comment on the issue to acknowledge the milestone
+      - name: Comment on Issue
+        uses: ./.github/actions/comment-on-issue
+        with:
+          comment: ${{ env.COMMENT }}
+  in_progress_milestone:
+    runs-on: ubuntu-latest
+    needs: milestone_release_workflow
+    if: github.event.action == 'labeled' && github.event.label.name == 'in-progress'
+    steps:
+      # Step 5: Move to In Progress column if marked 'in-progress'
+      - name: Move to In Progress Column
+        uses: ./.github/actions/move-to-column
+        with:
+          column_id: ${{ env.IN_PROGRESS_COLUMN_ID }}
+  review_milestone:
+    runs-on: ubuntu-latest
+    needs: in_progress_milestone
+    if: github.event.action == 'labeled' && github.event.label.name == 'review'
+    steps:
+      # Step 6: Move to Review column if marked 'review'
+      - name: Move to Review Column
+        uses: ./.github/actions/move-to-column
+        with:
+          column_id: ${{ env.REVIEW_COLUMN_ID }}
+  complete_milestone:
+    runs-on: ubuntu-latest
+    needs: review_milestone
+    if: github.event.action == 'closed'
+    steps:
+      # Step 7: Move to Done column on issue closure
+      - name: Move to Done Column
+        uses: ./.github/actions/move-to-column
+        with:
+          column_id: ${{ env.DONE_COLUMN_ID }}
+      # Step 8: Comment to indicate completion of the issue for the milestone
+      - name: Comment on Issue Completion
+        uses: ./.github/actions/comment-on-issue
+        with:
+          comment: "This issue has been resolved and marked as complete for this milestone."

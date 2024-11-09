@@ -1,0 +1,80 @@
+name: Bug Report Workflow
+on:
+  issues:
+    types: [opened, labeled]
+permissions:
+  issues: write
+  contents: read
+  pull-requests: write
+  project: write
+jobs:
+  bug_report_workflow:
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'bug' || github.event.action == 'opened'
+    env:
+      TRIAGE_COLUMN_ID: ${{ secrets.TRIAGE_COLUMN_ID }}
+      PRIORITY_COLUMN_ID: ${{ secrets.PRIORITY_COLUMN_ID }}
+      IN_PROGRESS_COLUMN_ID: ${{ secrets.IN_PROGRESS_COLUMN_ID }}
+      BUG_LABEL: "bug"
+      PRIORITY_LABEL: "priority"
+      COMMENT: "Thank you for reporting this bug! Our team will review and triage it shortly."
+    steps:
+      # Step 1: Check and create required labels
+      - name: Ensure Labels Exist
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const labels = await github.issues.listLabelsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo
+            });
+
+            const existingLabels = labels.data.map(label => label.name);
+            const requiredLabels = ["${{ env.BUG_LABEL }}", "${{ env.PRIORITY_LABEL }}"];
+
+            for (const label of requiredLabels) {
+              if (!existingLabels.includes(label)) {
+                await github.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label,
+                  color: label === "${{ env.BUG_LABEL }}" ? "d73a4a" : "d93f0b",  // Bug (red) and priority colors
+                  description: label === "${{ env.BUG_LABEL }}" ? "Bug report label" : "Priority label"
+                });
+              }
+            }
+      # Step 2: Add 'bug' label to new issues
+      - name: Add Bug Label
+        uses: ./.github/actions/add-label
+        with:
+          label: ${{ env.BUG_LABEL }}
+      # Step 3: Move the issue to the Triage column
+      - name: Move to Triage Column
+        uses: ./.github/actions/move-to-column
+        with:
+          column_id: ${{ env.TRIAGE_COLUMN_ID }}
+      # Step 4: Comment on the issue to acknowledge receipt
+      - name: Comment on Issue
+        uses: ./.github/actions/comment-on-issue
+        with:
+          comment: ${{ env.COMMENT }}
+  prioritize_bug:
+    runs-on: ubuntu-latest
+    needs: bug_report_workflow
+    if: github.event.action == 'labeled' && github.event.label.name == 'priority'
+    steps:
+      # Step 5: Move to the Priority column if marked with 'priority'
+      - name: Move to Priority Column
+        uses: ./.github/actions/move-to-column
+        with:
+          column_id: ${{ env.PRIORITY_COLUMN_ID }}
+  in_progress_bug:
+    runs-on: ubuntu-latest
+    needs: prioritize_bug
+    if: github.event.action == 'labeled' && github.event.label.name == 'in-progress'
+    steps:
+      # Step 6: Move to In Progress column if labeled 'in-progress'
+      - name: Move to In Progress Column
+        uses: ./.github/actions/move-to-column
+        with:
+          column_id: ${{ env.IN_PROGRESS_COLUMN_ID }}
